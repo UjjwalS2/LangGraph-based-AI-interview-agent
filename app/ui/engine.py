@@ -1,27 +1,32 @@
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Iterator, Optional
 
 from app.ui.mock_engine import PipelineEvent, MockInterviewEngine, TOPICS
 
+# IMPORTANT: keep the Streamlit startup path lightweight.  The real graph imports
+# the RAG/embedding stack and can be expensive or fragile on hosted environments.
+# It is therefore loaded only when explicitly enabled.
 _graph = None
 _import_error: Optional[str] = None
 
 
 def _try_load_graph():
+    """Load the real LangGraph backend on demand."""
     global _graph, _import_error
+    if _graph is not None:
+        return True
     try:
         from app.graph.workflow import get_compiled_graph
         _graph = get_compiled_graph()
+        _import_error = None
         return True
     except Exception as e:
-        _import_error = str(e)
+        _import_error = f"{type(e).__name__}: {e}"
         return False
-
-
-BACKEND_AVAILABLE = _try_load_graph()
 
 
 class LiveEngine:
@@ -147,6 +152,16 @@ class LiveEngine:
 
 
 def get_engine():
-    if BACKEND_AVAILABLE and _graph is not None:
-        return LiveEngine(_graph), "live", None
-    return MockInterviewEngine(), "offline", _import_error
+    """Return a fast offline engine by default; opt into the live graph explicitly.
+
+    Set INTERVIEW_LIVE_BACKEND=1 in Streamlit secrets/environment when the full
+    LangGraph/RAG backend should be used.  This keeps hosted UI startup reliable.
+    """
+    use_live = os.getenv("INTERVIEW_LIVE_BACKEND", "0").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if use_live:
+        if _try_load_graph() and _graph is not None:
+            return LiveEngine(_graph), "live", None
+        return MockInterviewEngine(), "offline", _import_error
+    return MockInterviewEngine(), "offline", None
