@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "num_sessions": 1000,
+    "total_turns": 2479,
+    "traffic_type": "zipfian_power_law_human_traffic",
+    "wall_duration_sec": 29.28
+  },
+  "kpis": {
+    "cache_hit_rate_pct": 45.91,
+    "cost_reduction_vs_pro_pct": 92.68,
+    "cache_savings_vs_uncached_pct": 28.59,
+    "baseline_all_pro_cost_usd": 7.7469,
+    "baseline_uncached_hybrid_usd": 0.794,
+    "optimized_cost_usd": 0.567,
+    "flash_eval_invocations": 1341,
+    "pro_escalation_invocations": 30,
+    "escalation_rate_pct": 1.21,
+    "latencies_ms": {
+      "pure_cache_hits": {
+        "p50": 1.8,
+        "p95": 2.54,
+        "p99": 3.23,
+        "mean": 1.82
+      },
+      "flash_direct": {
+        "p50": 1478.86,
+        "p95": 1668.39,
+        "p99": 1725.36,
+        "mean": 1485.24
+      },
+      "pro_escalated": {
+        "p50": 4917.18,
+        "p95": 5583.83,
+        "p99": 5643.01,
+        "mean": 5017.74
+      },
+      "combined_e2e": {
+        "p50": 1330.82,
+        "p95": 1656.51,
+        "p99": 4706.51,
+        "mean": 847.02
+      },
+      "components": {
+        "cache_lookup_p50": 1.8,
+        "cache_lookup_p95": 2.48,
+        "retrieval_p50": 4.99,
+        "retrieval_p95": 12.0
+      }
+    },
+    "traffic_split": {
+      "head_turns": 940,
+      "head_hits": 910,
+      "head_hit_rate_pct": 96.8,
+      "tail_turns": 1539,
+      "tail_hits": 228,
+      "tail_hit_rate_pct": 14.8
+    }
+  }
+}

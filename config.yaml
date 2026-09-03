@@ -1,0 +1,41 @@
+# Central Configuration for LangGraph Agentic Interview Platform
+
+backend: "offline"  # "offline" (demo simulation) or "live" (calls Gemini API)
+
+graph:
+  max_rounds: 3
+  checkpoint_type: "memory"  # "memory" or "sqlite"
+  escalation_enabled: true
+  quality_threshold: 0.70
+
+embedding:
+  model: "BAAI/bge-m3"
+  dimension: 1024
+  batch_size: 16
+  device: "cpu"
+
+retrieval:
+  top_k: 5
+  rrf_k: 60
+  bm25_weight: 0.5
+  dense_weight: 0.5
+
+cache:
+  enabled: true
+  similarity_threshold: 0.90
+  max_entries: 5000
+
+pricing:
+  flash:
+    input_per_1m_tokens: 0.15
+    output_per_1m_tokens: 0.60
+  pro:
+    input_per_1m_tokens: 1.25
+    output_per_1m_tokens: 5.00
+
+paths:
+  knowledge_base: "data/knowledge_base"
+  qdrant_storage: "storage/qdrant"
+  bm25_storage: "storage/bm25"
+  cache_storage: "storage/cache"
+  simulation_output: "storage/simulation_results.json"
