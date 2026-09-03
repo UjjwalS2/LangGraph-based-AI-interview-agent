@@ -1,24 +1,3 @@
-"""
-Adapter between the Streamlit UI and your real LangGraph backend.
-
-WHY THIS FILE EXISTS
----------------------
-I couldn't browse into your `app/graph/`, `app/cache/`, `app/rag/` source
-from here (GitHub blocks automated access to repo subfolders), so I don't
-know the exact `InterviewState` field names or the exported graph-builder
-function signature. Rather than guess and hand you something that silently
-does the wrong thing, this adapter:
-
-  1. Tries a few common import patterns to find your compiled graph.
-  2. If found, streams it node-by-node and animates the *exact* 8 node
-     names from your README (profile_parser_node ... summary_report_node).
-  3. Reads a few plausible field names out of the returned state (marked
-     TODO below) — if your schema uses different names, the UI still runs,
-     it just shows "—" for that value until you fix the one line noted.
-  4. If no graph is found at all, falls back to MockInterviewEngine so the
-     app is still fully usable.
-"""
-
 from __future__ import annotations
 
 import time
@@ -33,29 +12,19 @@ _import_error: Optional[str] = None
 
 def _try_load_graph():
     global _graph, _import_error
-    attempts = [
-        lambda: __import__("app.graph.workflow", fromlist=["build_graph"]).build_graph(),
-        lambda: __import__("app.graph.workflow", fromlist=["compile_graph"]).compile_graph(),
-        lambda: __import__("app.graph.workflow", fromlist=["get_graph"]).get_graph(),
-        lambda: __import__("app.graph.workflow", fromlist=["workflow"]).workflow,
-        lambda: __import__("app.graph.graph_builder", fromlist=["GraphBuilder"]).GraphBuilder().build(),
-    ]
-    for attempt in attempts:
-        try:
-            _graph = attempt()
-            return True
-        except Exception as e:
-            _import_error = str(e)
-            continue
-    return False
+    try:
+        from app.graph.workflow import get_compiled_graph
+        _graph = get_compiled_graph()
+        return True
+    except Exception as e:
+        _import_error = str(e)
+        return False
 
 
 BACKEND_AVAILABLE = _try_load_graph()
 
 
 class LiveEngine:
-    """Streams your real compiled graph. Mirrors MockInterviewEngine's interface."""
-
     def __init__(self, graph):
         self.graph = graph
 
@@ -87,23 +56,19 @@ class LiveEngine:
         config = {"configurable": {"thread_id": state["thread_id"]}}
         try:
             result = self.graph.invoke(state, config=config)
-            state.update(result)
+            if isinstance(result, dict):
+                state.update(result)
         except Exception as e:
-            state["_engine_error"] = f"graph.invoke failed on question generation: {e}"
-
-        state["current_question"] = state.get("question") or state.get("current_question") or (
-            "⚠️ Couldn't read the question field from graph state — see app/ui/engine.py"
-        )
-        state["current_question_id"] = state.get("question_id", state.get("current_question_id"))
-        state["current_topic"] = state.get("topic", state.get("current_topic", "—"))
+            state["_engine_error"] = f"graph.invoke failed: {e}"
+        state["current_question"] = state.get("current_question") or state.get("question") or "⚠️ No question returned"
+        state["current_question_id"] = state.get("current_question_id") or state.get("question_id")
+        state["current_topic"] = state.get("current_topic") or state.get("topic") or "General"
         return state
 
     def run_round(self, state: dict, answer: str) -> Iterator[PipelineEvent]:
         config = {"configurable": {"thread_id": state["thread_id"]}}
         input_state = {**state, "candidate_answer": answer}
-        topic = state.get("current_topic", "—")
-        last_output = {}
-
+        topic = state.get("current_topic", "General")
         try:
             stream = self.graph.stream(input_state, config=config)
         except Exception as e:
@@ -112,21 +77,28 @@ class LiveEngine:
             return
 
         for event in stream:
+            if not isinstance(event, dict):
+                continue
             for node_name, output in event.items():
                 yield PipelineEvent(node_name, "active")
                 time.sleep(0.08)
-                last_output = output or {}
+                output = output or {}
+                current_eval = output.get("current_evaluation", {}) if isinstance(output, dict) else {}
                 detail = {
-                    "hit": last_output.get("cache_hit"),
-                    "confidence": last_output.get("confidence"),
-                    "latency_ms": last_output.get("latency_ms"),
+                    "hit": output.get("cache_hit") if isinstance(output, dict) else None,
+                    "confidence": current_eval.get("confidence", output.get("confidence")) if isinstance(output, dict) else None,
+                    "latency_ms": output.get("latency_ms") if isinstance(output, dict) else None,
                 }
                 yield PipelineEvent(node_name, "done", detail)
-                state.update(last_output)
+                if isinstance(output, dict):
+                    state.update(output)
 
-        is_hit = bool(last_output.get("cache_hit"))
-        confidence = float(last_output.get("confidence", 0.75) or 0.75)
-        score = float(last_output.get("score", confidence * 10) or confidence * 10)
+        current_eval = state.get("current_evaluation", {}) or {}
+        is_hit = bool(state.get("cache_hit", False))
+        confidence = float(current_eval.get("confidence", state.get("confidence", 0.75)) or 0.75)
+        score = float(current_eval.get("score", state.get("score", confidence * 10)) or confidence * 10)
+        model_used = state.get("model_used") or current_eval.get("model_used", "flash")
+        escalated = bool(state.get("escalated", False) or model_used == "pro")
 
         state.setdefault("topic_scores", {t: [] for t in TOPICS})
         state["topic_scores"].setdefault(topic, []).append(score)
@@ -134,37 +106,39 @@ class LiveEngine:
             state["cache_hits"] = state.get("cache_hits", 0) + 1
         else:
             state["cache_misses"] = state.get("cache_misses", 0) + 1
+        if escalated and not is_hit:
+            state["escalations"] = state.get("escalations", 0) + 1
 
         state["transcript"].append({
-            "round": state["round"] + 1,
+            "round": state.get("round", 0) + 1,
             "topic": topic,
             "question": state.get("current_question"),
             "answer": answer,
             "cache_hit": is_hit,
-            "model": last_output.get("model_used", "flash"),
+            "model": model_used,
             "confidence": confidence,
             "score": score,
         })
-        state["round"] += 1
+        state["round"] = state.get("round", 0) + 1
 
     def build_summary(self, state: dict) -> dict:
-        competency = state.get("competency_scores")
+        report = state.get("final_report", {}) or {}
+        competency = report.get("radar_competencies") or state.get("competency_scores")
         if not competency:
             competency = {
                 t: round(sum(s) / len(s), 1)
                 for t, s in state.get("topic_scores", {}).items() if s
             }
-        overall = state.get("overall_score")
+        overall = report.get("overall_score", state.get("overall_score"))
         if overall is None:
             overall = round(sum(competency.values()) / len(competency), 1) if competency else 0.0
-
+        recommendation = report.get("recommendation") or state.get("recommendation") or "See competency breakdown"
         total_turns = state.get("cache_hits", 0) + state.get("cache_misses", 0)
         hit_rate = state.get("cache_hits", 0) / total_turns if total_turns else 0.0
-
         return {
-            "overall_score": overall,
+            "overall_score": float(overall),
             "competency": competency,
-            "recommendation": state.get("recommendation", "See competency breakdown"),
+            "recommendation": recommendation,
             "cache_hit_rate": hit_rate,
             "escalations": state.get("escalations", 0),
             "cost_usd": state.get("cost_usd", 0.0),
