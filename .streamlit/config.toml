@@ -9,5 +9,4 @@ font = "sans serif"
 headless = true
 enableCORS = false
 enableXsrfProtection = false
-showSidebarNavigation = false
 maxUploadSize = 25
